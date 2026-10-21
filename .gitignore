@@ -1,0 +1,15 @@
+# Run output (transcripts, CSV reports)
+Logs/
+*.log
+*.csv
+
+# Local tests and fixtures (kept local, not published)
+Tests/
+
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.vs/
+.vscode/
+*.tmp
+*~
