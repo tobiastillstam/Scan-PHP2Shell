@@ -61,4 +61,3 @@ First release. Scans a Windows host for PHP installs affected by PHP2Shell
 
 [1.1.0]: https://github.com/tobiastillstam/Scan-PHP2Shell/releases/tag/v1.1.0
 [1.0.1]: https://github.com/tobiastillstam/Scan-PHP2Shell/releases/tag/v1.0.1
-[1.0.0]: https://github.com/tobiastillstam/Scan-PHP2Shell/releases/tag/v1.0.0
