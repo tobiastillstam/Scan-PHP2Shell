@@ -3,14 +3,16 @@
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE)
 ![Platform](https://img.shields.io/badge/Windows%20Server-2016%2B-0078D6)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Version](https://img.shields.io/badge/version-1.0.1-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 
 Finds PHP installs on a Windows host and reports whether they are affected by
 **PHP2Shell** (CVE-2026-109618, CVE-2026-109619): unauthenticated remote code
 execution, fixed upstream on 2026-10-21.
 
 Read-only. PHP is never executed; versions come from the files' version
-resources. One exit code per host, so it fits RMM tools and scheduled tasks.
+resources. (Running a `php.exe` found on disk to ask its version would run
+whatever sits in a writable folder under that name, with the scanner's
+rights.) One exit code per host, so it fits RMM tools and scheduled tasks.
 
 ---
 
@@ -20,6 +22,11 @@ resources. One exit code per host, so it fits RMM tools and scheduled tasks.
   `php.exe`, `php-cgi.exe`, `php-win.exe` and the engine DLLs
   (`php5/7/8[ts].dll`). IIS FastCGI and Apache module setups are covered,
   not only installs that ship `php.exe`.
+- Reads what **points at** PHP: IIS, Apache, services, the machine PATH and
+  installed programs (see [References](#references)). Referenced binaries
+  are checked even where the walk does not go, and every install lists what
+  uses it in `ReferencedBy`, so a live web server install can be told apart
+  from a forgotten zip.
 - Groups the files per folder into one install. The **lowest** PHP version
   in the folder decides, so a half-finished upgrade is caught.
 - Only files stamped *The PHP Group* / *PHP* count as PHP. Shims and
@@ -86,6 +93,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Scan-PHP2Shell.ps1
 | `-ExcludePath` | | Extra folders to leave out (full paths). |
 | `-LogRoot` | `<script folder>\Logs` | Folder for the transcript and CSV files. |
 | `-PassThru` | | Also write one result object per install to the pipeline. |
+| `-SkipReferences` | | Walk the disk only; do not read IIS, Apache, services, PATH or installed programs. |
+
+References are read with `-Path` too, so a referenced install outside those
+folders still shows up. Add `-SkipReferences` for a strict folder-only scan.
 
 Always excluded on each scanned drive (not readable even when elevated, never
 hold PHP):
@@ -113,7 +124,7 @@ Full help: `Get-Help .\Scan-PHP2Shell.ps1 -Full`
 | --- | --- |
 | `UNAFFECTED` | At or above the fixed release for its branch. |
 | `NEEDS PATCH` | Below the fixed release, or an end-of-life branch (`EndOfLife = True`). |
-| `WARN` | Needs a manual check: not identified as PHP, version unreadable, cloud placeholder, or a branch the advisory does not cover (8.6+). |
+| `WARN` | Needs a manual check: not identified as PHP, version unreadable, cloud placeholder, a branch the advisory does not cover (8.6+), or a reference that leads to no PHP. |
 
 ## Exit codes
 
@@ -129,6 +140,43 @@ folders still reports `1`.
 
 ---
 
+## References
+
+Before the walk the script reads where PHP is configured:
+
+| Source | What is read |
+| --- | --- |
+| IIS | `applicationHost.config`: FastCGI `fullPath` and handler `scriptProcessor` pointing at `php*.exe`. Shared configuration (`redirection.config`) is followed. |
+| Apache | `conf\httpd.conf` and everything it `Include`s, with `Define` / `${VAR}` expanded: `LoadModule php*_module`, `LoadFile php*.dll`, `FcgidWrapper php*.exe`, `PHPIniDir`. Server roots come from httpd services, running httpd processes and the usual folders (Apache24, XAMPP, WAMP, Laragon, UniServer, Program Files). |
+| Services | Services whose binary is `php*.exe`, directly or through NSSM. |
+| Machine PATH | Folders on the system PATH that hold PHP. |
+| Installed programs | Uninstall entries for PHP itself (`PHP 8.3.6`, not `PHP Manager` or `PHP Tools`) or a stack (XAMPP, WampServer, Laragon, AMPPS, Uniform Server, Bitnami WAMP); 64-bit, 32-bit and loaded user profiles. |
+
+The binaries at each location are read even when the walk does not reach
+them (outside `-Path`, excluded, a share, behind a junction). Each install
+lists its sources in the `ReferencedBy` column.
+
+A reference that leads nowhere is `WARN` (exit `2` unless something needs
+patching):
+
+- An IIS, Apache, service or PHP-program reference whose file or folder is
+  missing or not accessible gets a row of its own. If the folder does hold
+  PHP but the exact file is missing, the install's row turns from
+  `UNAFFECTED` to `WARN`.
+- An installed-programs entry for PHP with no PHP under its folder, or no
+  folder recorded. A stack entry only counts when its folder is gone (some
+  Bitnami stacks have no PHP).
+- An Apache path with a variable that is never defined.
+
+`PHPIniDir` and PATH entries only annotate; they never raise a `WARN`. A
+stale uninstall entry for a removed PHP keeps the host at exit `2` until the
+entry is removed (Programs and Features, or its Uninstall registry key).
+
+A 32-bit PowerShell (as some RMM agents run) reads IIS through `Sysnative`
+and both registry views, so it sees the same as a 64-bit session.
+
+---
+
 ## Output
 
 In `-LogRoot`, per run:
@@ -136,8 +184,8 @@ In `-LogRoot`, per run:
 | File | Content |
 | --- | --- |
 | `Scan-PHP2Shell-<host>-<time>.log` | Transcript of the run. |
-| `Scan-PHP2Shell-<host>-<time>.csv` | One row per install: ComputerName, Status, Version, Branch, FixedIn, EndOfLife, Action, InstallDir, Files, Note. Only written when PHP was found. |
-| `Scan-PHP2Shell-<host>-<time>-skipped.csv` | Folders that could not be read, with the reason. Only written when there are any. |
+| `Scan-PHP2Shell-<host>-<time>.csv` | One row per install: ComputerName, Status, Version, Branch, FixedIn, EndOfLife, Action, InstallDir, Files, ReferencedBy, Note. Only written when there is a row. |
+| `Scan-PHP2Shell-<host>-<time>-skipped.csv` | Folders and config sources (IIS config, Apache conf, service list, Uninstall keys) that could not be read, with the reason. Only written when there are any. |
 
 The host name is in the file names and in every row, so CSVs from many
 servers can be collected into one folder and merged with
@@ -159,6 +207,10 @@ CSV files are UTF-8 with BOM (Excel-friendly). Console output is ASCII only.
   reading would download them. They show as `WARN`.
 - The fixed versions are built into the script. A later advisory needs a
   new script version.
+- References: Apache `<IfModule>` / `<IfDefine>` blocks count as active,
+  and a service started with `-f` / `-d` uses a config that is not read.
+  Site `web.config` handler mappings, IIS Express and per-user PATH entries
+  are not read.
 
 ---
 
@@ -167,6 +219,8 @@ CSV files are UTF-8 with BOM (Excel-friendly). Console output is ASCII only.
 - php.net release announcements, 2026-10-21 (`php.net/archive/2026.php`)
 - Windows builds: <https://windows.php.net/downloads/releases/releases.json>
 - [NCSC-NL php2shell](https://github.com/NCSC-NL/php2shell)
+- IIS / Apache reference idea: [Check-PhpVersion](https://github.com/fardinbarashi/PHP-CVE-2026-109618-and-CVE-2026-109619)
+  by Code Ape (MIT)
 
 ---
 

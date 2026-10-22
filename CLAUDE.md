@@ -60,6 +60,26 @@ Template: `C:\Users\Tobias\.claude\script_templates\script_template.ps1`
   Windows\Installer\Razer) are for `-ExcludePath`.
 - **Cloud placeholders** (Offline / RecallOnOpen / RecallOnDataAccess
   attributes) are not read; reading would hydrate them. WARN.
+- **References (1.1.0)**, read before the walk unless `-SkipReferences`:
+  IIS applicationHost.config (fullPath / scriptProcessor, comments
+  stripped, redirection.config followed), Apache httpd.conf following
+  Include in order with Define expansion (not "all *.conf", which would
+  pick up files that are never loaded), services incl. NSSM, machine PATH,
+  Uninstall entries (both registry views + loaded HKU). Idea taken from
+  fardinbarashi/PHP-CVE-2026-109618-and-CVE-2026-109619 (Code Ape, MIT),
+  reviewed 2026-10-22. That tool runs `php.exe -r` to get the version (a
+  planted binary would run as admin) and compares against one latest
+  version (false NEEDS PATCH on patched 8.2-8.4); deliberately not copied.
+- **Reference rules** (decided with Tobias 2026-10-22): referenced binaries
+  are read even outside the walk (-Path, excludes, shares, junctions);
+  references also apply with -Path. A missing reference is WARN: own row,
+  or UNAFFECTED -> WARN when the folder holds PHP but the exact file is
+  missing. PHP uninstall entry with no PHP below / no folder -> WARN; stack
+  entry only when its folder is gone. PHPIniDir and PATH annotate only.
+  Undefined Apache variable -> WARN. Unreadable config source ->
+  -skipped.csv (exit 2).
+- **32-bit host process** (RMM agents): IIS via Sysnative, registry via
+  OpenBaseKey Registry64 + Registry32, httpd paths via Win32_Process.
 
 ## Validated (2026-10-21, Windows 11 ARM64, non-elevated copy)
 
@@ -87,18 +107,34 @@ config\BFS, LocalService Ngc, ProgramData SystemData /
 CapabilityAccessManager, Windows\Installer\Razer (host-specific, not
 excluded) and one leftover test fixture.
 
+## Validated 1.1.0 (2026-10-22, same host, non-elevated)
+
+Harness now 79 assertions (80 with -RealPhpDir): the 43 above, 4 for a live reference run on this host
+(no IIS / Apache / PHP programs here, so "References to PHP: none"),
+-SkipReferences, and `Tests\Invoke-ReferenceTest.ps1` (31 unit checks:
+IIS parsing incl. comments / env vars / handler arguments, Apache Include
+order / Define / ServerRoot-relative / unused file / undefined variable,
+and the merge rules on stub installs). Existing scenarios pass
+-SkipReferences so the host's own config cannot change them. Passed on
+PS 5.1, PS 7 and 32-bit PS 5.1 (SysWOW64; Sysnative path exercised, no IIS
+present).
+
 ## Open (needs a real elevated session on a server)
 
 1. Run elevated on a server and read the `-skipped.csv`. Server roles may
    lock further folders (e.g. NetworkService Ngc); add generic ones to
    `$SystemExcludes`.
 2. A server with a real PHP install (IIS FastCGI, XAMPP / Laragon if any).
-3. Run through the RMM tool and check the exit code arrives.
+   For 1.1.0 also check: ReferencedBy filled from the real
+   applicationHost.config / httpd.conf, no false WARN from stale Uninstall
+   entries or Apache conditionals, run time of the reference pass.
+3. Run through the RMM tool and check the exit code arrives (and, if the
+   agent is 32-bit, that IIS references still show up).
 
 ## Backlog
 
-- Read IIS FastCGI config (applicationHost.config) and Apache LoadModule
-  lines to find PHP referenced outside the scanned drives.
 - Report php.ini mitigations per install.
+- Site web.config handler mappings, IIS Express, per-user PATH, Apache
+  services with -f / -d (ConfigArgs in the service registry key).
 - Load the fixed-release table from a file so a new advisory does not need
   a script release.
