@@ -27,6 +27,10 @@ All notable changes to this project are documented here. The format is based on
   through both views.
 - `-skipped.csv` can also list config sources that could not be read.
 
+### Tested
+- Test harness (79 assertions, plus 31 reference parser and merge checks)
+  passed on PowerShell 5.1, PowerShell 7 and 32-bit PowerShell 5.1.
+
 ## [1.0.1] - 2026-10-22
 
 ### Changed
@@ -36,6 +40,10 @@ All notable changes to this project are documented here. The format is based on
   LocalService `Ngc`, `ProgramData\Microsoft\Windows\SystemData` and
   `CapabilityAccessManager`. These stay denied to administrators and would
   otherwise make every run inconclusive (exit 2).
+
+### Tested
+- Test harness (44 assertions) passed elevated on PowerShell 5.1 and 7.
+- Elevated full system-drive scan: no false hits.
 
 ## [1.0.0] - 2026-10-21
 
@@ -58,6 +66,11 @@ First release. Scans a Windows host for PHP installs affected by PHP2Shell
   elevated.
 - Long path support (`\\?\`), junction loop protection, cloud placeholders
   left unread.
+
+### Tested
+- Test harness (44 assertions) passed on PowerShell 5.1 and 7, including
+  the official PHP 8.4.27 NTS x64 build (`UNAFFECTED`).
+- Non-elevated full system-drive scan: no false hits.
 
 [1.1.0]: https://github.com/tobiastillstam/Scan-PHP2Shell/releases/tag/v1.1.0
 [1.0.1]: https://github.com/tobiastillstam/Scan-PHP2Shell/releases/tag/v1.0.1

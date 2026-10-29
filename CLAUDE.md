@@ -2,20 +2,28 @@
 
 Single read-only PowerShell script that finds PHP installs on a Windows host
 and reports whether they are affected by PHP2Shell (CVE-2026-109618,
-CVE-2026-109619), fixed upstream 2026-10-21 in 8.5.12, 8.4.27, 8.3.36 and
-8.2.35. Meant to run on many Windows servers (by hand, RMM or scheduled
-task) and be collected via exit code and CSV.
+CVE-2026-109619). Meant to run on many Windows servers (by hand, RMM or
+scheduled task) and be collected via exit code and CSV.
 
 Owner: Tobias Tillstam / Tillnet. License: MIT.
 
-Origin: rewrite of a quick unreleased scanner (Downloads\Scan-PHP2Shell.ps1)
-that only looked for php.exe, misread shims as old PHP, always exited 0 and
-had display-only output.
+## Fixed releases
+
+Upstream fix released 2026-10-21:
+
+| Branch | Fixed in |
+| --- | --- |
+| 8.5 | 8.5.12 |
+| 8.4 | 8.4.27 |
+| 8.3 | 8.3.36 |
+| 8.2 | 8.2.35 |
+| 8.1 and older | no upstream fix (end of life) |
+
+The table lives in the script; keep README.md in sync when it changes.
 
 ## Coding conventions (house template)
 
-Template: `C:\Users\Tobias\.claude\script_templates\script_template.ps1`
-(see the global CLAUDE.md).
+Scripts follow the house PowerShell template (kept outside this repo).
 
 - `#Requires -Version 5.1` and `#Requires -RunAsAdministrator`.
 - NOTES holds Author, Webpage, GitHub, Company, License, Version (semver),
@@ -34,6 +42,9 @@ Template: `C:\Users\Tobias\.claude\script_templates\script_template.ps1`
 - **Read-only.** Nothing is gated by ShouldProcess because nothing on the
   host changes; transcript/CSV/LogRoot writes pass `-WhatIf:$false`.
   `-WhatIf` therefore runs a normal scan.
+- **Never runs a found binary.** Versions come from the file's version
+  resource only, never from `php.exe -v` / `php.exe -r`: the scan runs as
+  admin, so a planted `php.exe` would execute with admin rights.
 - **Exit codes** 0 unaffected / 1 needs patch / 2 inconclusive / 3 script
   error. 1 wins over 2. The catch block logs, writes the error record
   (`Write-Error -ErrorAction Continue`) and sets 3 instead of rethrowing:
@@ -49,15 +60,17 @@ Template: `C:\Users\Tobias\.claude\script_templates\script_template.ps1`
   Chocolatey shim, is WARN with company/product/version in the note.
 - **Classification**: branch in the fixed table -> UNAFFECTED / NEEDS
   PATCH; 8.6+ or 9+ -> WARN (not covered); everything else identified
-  (8.1, 8.0, 7.x, 5.x) -> NEEDS PATCH with EndOfLife = True.
+  (8.1, 8.0, 7.x, 5.x) -> NEEDS PATCH with EndOfLife = True. Compare per
+  branch, never against one "latest" version (that would flag patched
+  8.2-8.4 as NEEDS PATCH).
 - **Walk**: iterative stack over `\\?\` paths (long paths), reparse points
   not followed (junction loops), unreadable folders recorded with reason.
 - **System excludes** per scanned drive root (`$SystemExcludes`): System
   Volume Information, $Recycle.Bin, Recovery, plus Windows / ProgramData /
-  Defender for Endpoint folders seen denied in the elevated run below.
-  Without these every elevated run would be inconclusive (exit 2). Only
-  generic Windows folders go in the list; host-specific ones (e.g.
-  Windows\Installer\Razer) are for `-ExcludePath`.
+  Program Files folders that stay denied to administrators. Without these
+  every elevated run would be inconclusive (exit 2). Only generic Windows
+  folders go in the list; host- or vendor-specific ones are for
+  `-ExcludePath`.
 - **Cloud placeholders** (Offline / RecallOnOpen / RecallOnDataAccess
   attributes) are not read; reading would hydrate them. WARN.
 - **References (1.1.0)**, read before the walk unless `-SkipReferences`:
@@ -65,71 +78,41 @@ Template: `C:\Users\Tobias\.claude\script_templates\script_template.ps1`
   stripped, redirection.config followed), Apache httpd.conf following
   Include in order with Define expansion (not "all *.conf", which would
   pick up files that are never loaded), services incl. NSSM, machine PATH,
-  Uninstall entries (both registry views + loaded HKU). Idea taken from
-  fardinbarashi/PHP-CVE-2026-109618-and-CVE-2026-109619 (Code Ape, MIT),
-  reviewed 2026-10-22. That tool runs `php.exe -r` to get the version (a
-  planted binary would run as admin) and compares against one latest
-  version (false NEEDS PATCH on patched 8.2-8.4); deliberately not copied.
-- **Reference rules** (decided with Tobias 2026-10-22): referenced binaries
-  are read even outside the walk (-Path, excludes, shares, junctions);
-  references also apply with -Path. A missing reference is WARN: own row,
-  or UNAFFECTED -> WARN when the folder holds PHP but the exact file is
-  missing. PHP uninstall entry with no PHP below / no folder -> WARN; stack
-  entry only when its folder is gone. PHPIniDir and PATH annotate only.
-  Undefined Apache variable -> WARN. Unreadable config source ->
-  -skipped.csv (exit 2).
+  Uninstall entries (both registry views + loaded HKU). Credit for the idea
+  is in README.md.
+- **Reference rules**: referenced binaries are read even outside the walk
+  (-Path, excludes, shares, junctions); references also apply with -Path.
+  A missing reference is WARN: own row, or UNAFFECTED -> WARN when the
+  folder holds PHP but the exact file is missing. PHP uninstall entry with
+  no PHP below / no folder -> WARN; stack entry only when its folder is
+  gone. PHPIniDir and PATH annotate only. Undefined Apache variable ->
+  WARN. Unreadable config source -> -skipped.csv (exit 2).
 - **32-bit host process** (RMM agents): IIS via Sysnative, registry via
   OpenBaseKey Registry64 + Registry32, httpd paths via Win32_Process.
 
-## Validated (2026-10-21, Windows 11 ARM64, non-elevated copy)
+## Test harness
 
-Harness: `Tests\Invoke-ScannerTest.ps1 -Exe powershell.exe|pwsh.exe
-[-RealPhpDir <extracted official build>]` (git-ignored, local only). It
-compiles stub binaries with chosen version resources, strips
-`#Requires -RunAsAdministrator` from a copy, and checks 44 assertions:
-every status branch, shim / no-version / garbage file, php-cgi-only,
-DLL-only, upper-case name, mixed versions, deep and > 260-char paths,
-junction loop, denied folder (exit 2 + skipped CSV), `-ExcludePath`
-(exit 0), missing path (exit 3), `-WhatIf`, `-PassThru`, ASCII console.
-Passed on PS 5.1 and PS 7, including the real PHP 8.4.27 build
-(UNAFFECTED). Full C:\ scan non-elevated: 125,789 folders in 38 s, 190
-folders denied (mostly ProgramData\Microsoft, Windows\System32), no false
-hits outside the fixtures.
+`Tests\` is git-ignored and kept local; it is not part of the published
+repo. Dependency-free (no Pester).
 
-## Validated elevated (2026-10-22, same Windows 11 ARM64 host, v1.0.1)
-
-Harness passed all 44 assertions elevated on PS 5.1 and PS 7 (real PHP
-build not re-run; it was no longer on disk). The deny ACE in the locked
-scenario still applies when elevated. Full scan with the real script:
-130,875 folders in 38 s, no hits outside test fixtures, 18 folders
-denied before the exclude update: Defender for Endpoint (11), WebThreatDefSvc,
-config\BFS, LocalService Ngc, ProgramData SystemData /
-CapabilityAccessManager, Windows\Installer\Razer (host-specific, not
-excluded) and one leftover test fixture.
-
-## Validated 1.1.0 (2026-10-22, same host, non-elevated)
-
-Harness now 79 assertions (80 with -RealPhpDir): the 43 above, 4 for a live reference run on this host
-(no IIS / Apache / PHP programs here, so "References to PHP: none"),
--SkipReferences, and `Tests\Invoke-ReferenceTest.ps1` (31 unit checks:
-IIS parsing incl. comments / env vars / handler arguments, Apache Include
-order / Define / ServerRoot-relative / unused file / undefined variable,
-and the merge rules on stub installs). Existing scenarios pass
--SkipReferences so the host's own config cannot change them. Passed on
-PS 5.1, PS 7 and 32-bit PS 5.1 (SysWOW64; Sysnative path exercised, no IIS
-present).
-
-## Open (needs a real elevated session on a server)
-
-1. Run elevated on a server and read the `-skipped.csv`. Server roles may
-   lock further folders (e.g. NetworkService Ngc); add generic ones to
-   `$SystemExcludes`.
-2. A server with a real PHP install (IIS FastCGI, XAMPP / Laragon if any).
-   For 1.1.0 also check: ReferencedBy filled from the real
-   applicationHost.config / httpd.conf, no false WARN from stale Uninstall
-   entries or Apache conditionals, run time of the reference pass.
-3. Run through the RMM tool and check the exit code arrives (and, if the
-   agent is 32-bit, that IIS references still show up).
+- `Tests\Invoke-ScannerTest.ps1 -Exe powershell.exe|pwsh.exe
+  [-RealPhpDir <extracted official build>]` runs the script as a child
+  process with `-File`. It compiles stub binaries with chosen version
+  resources and strips `#Requires -RunAsAdministrator` from a copy (the
+  original keeps it). 79 assertions (80 with `-RealPhpDir`): every status
+  branch, shim / no-version / garbage file, php-cgi-only, DLL-only,
+  upper-case name, mixed versions, deep and > 260-char paths, junction
+  loop, denied folder (exit 2 + skipped CSV), `-ExcludePath` (exit 0),
+  missing path (exit 3), `-WhatIf`, `-PassThru`, ASCII console, a live
+  reference run, `-SkipReferences`.
+- `Tests\Invoke-ReferenceTest.ps1`: 31 unit checks for IIS parsing (comments,
+  env vars, handler arguments), Apache Include order / Define /
+  ServerRoot-relative / unused file / undefined variable, and the merge
+  rules on stub installs.
+- Existing scenarios pass `-SkipReferences` so the test machine's own
+  config cannot change them.
+- Run under PS 5.1, PS 7 and 32-bit PS 5.1 (SysWOW64), non-elevated and
+  once elevated. The deny-ACE scenario also holds when elevated.
 
 ## Backlog
 
